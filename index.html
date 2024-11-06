@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Face Detection</title>
+    <script src="https://cdn.jsdelivr.net/npm/axios/dist/axios.min.js"></script>
+    <script defer src="https://cdn.jsdelivr.net/npm/@vladmandic/face-api/dist/face-api.min.js"></script>
+    <style>
+        body,
+        html {
+            margin: 0;
+            padding: 0;
+            height: 100%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background-color: #f0f0f0;
+        }
+
+        #video,
+        #canvas,
+        #faceCanvas {
+            border: 2px solid #333;
+            margin: 0 10px;
+        }
+    </style>
+</head>
+
+<body>
+    <video id="video" width="640" height="480" autoplay muted>
+        <canvas id="canvas" width="640" height="480" style="display: none"></canvas>
+    </video>
+    <div>
+        <h2 style="margin-left: 10px;">Face Detection</h2>
+        <canvas id="faceCanvas" width="160" height="120"></canvas>
+        <h2 style="margin-left: 10px;">Status: <span id="status"></span></h2>
+    </div>
+
+    <script>
+        const video = document.getElementById("video");
+        const canvas = document.getElementById("canvas");
+        const faceCanvas = document.getElementById("faceCanvas");
+        const context = canvas.getContext("2d");
+        const faceContext = faceCanvas.getContext("2d");
+        let lastUpdateTime = 0; // Thời gian cập nhật cuối cùng
+
+        async function startCamera() {
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+                video.srcObject = stream;
+                video.onloadedmetadata = () => {
+                    detectFace();
+                };
+            } catch (error) {
+                console.error("Không thể truy cập camera:", error);
+            }
+        }
+
+        async function detectFace() {
+            await faceapi.nets.tinyFaceDetector.loadFromUri(
+                "https://cdn.jsdelivr.net/npm/@vladmandic/face-api/model/"
+            ); // Load model
+
+            async function processFrames() {
+                // Lật ảnh từ video trước khi phát hiện khuôn mặt
+                context.save();
+                context.drawImage(video, 0, 0, canvas.width, canvas.height);
+                context.restore();
+
+                // Gọi API nhận diện khuôn mặt trên ảnh đã lật
+                const detection = await faceapi.detectSingleFace(canvas, new faceapi.TinyFaceDetectorOptions());
+
+                if (detection) {
+                    const { x, y, width, height } = detection.box;
+
+                    faceContext.clearRect(0, 0, faceCanvas.width, faceCanvas.height);
+                    faceContext.drawImage(canvas, x, y, width, height, 0, 0, faceCanvas.width, faceCanvas.height);
+
+                    const faceImageBase64 = faceCanvas.toDataURL();
+                    const currentTime = Date.now();
+
+                    // Chỉ gửi yêu cầu API nếu đã qua 1 giây
+                    if (currentTime - lastUpdateTime > 100) {
+                        lastUpdateTime = currentTime; // Cập nhật thời gian
+
+                        try {
+                            const response = await axios.get(
+                                "https://aef0-34-91-171-68.ngrok-free.app/predict",
+                                {
+                                    params: {
+                                        image_base64: String(faceImageBase64),
+                                    },
+                                    headers: {
+                                        "Content-Type": "application/json",
+                                        "ngrok-skip-browser-warning": "any",
+                                    },
+                                }
+                            );
+                            let status = "null";
+                            if (response.data.result == "real" && parseFloat(response.data.probability) < 0.96) status = "spoof";
+                            else status = response.data.result;
+                            document.getElementById("status").innerHTML = `${status}`;
+                        } catch (error) {
+                            console.error("Có lỗi xảy ra:", error);
+                        }
+                    }
+                }
+                else {
+                    faceContext.clearRect(0, 0, faceCanvas.width, faceCanvas.height);
+                    faceContext.fillStyle = "white";
+                    faceContext.fillRect(0, 0, faceCanvas.width, faceCanvas.height);
+                    document.getElementById("status").innerHTML = '';
+                }
+                requestAnimationFrame(processFrames);
+            }
+
+            processFrames();
+        }
+
+        startCamera();
+    </script>
+</body>
+
+</html>
